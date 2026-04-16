@@ -53,6 +53,13 @@
                 <h3 class="text-lg font-bold text-gray-700">链接已失效</h3>
                 <p class="text-gray-500 text-sm mt-2">该邀请链接不存在或已达到使用次数上限。</p>
             </div>
+            <div id="cached-account-recover" class="hidden mt-4 p-3 rounded-xl border border-emerald-200 bg-emerald-50/70 text-left">
+                <div class="text-xs font-bold text-emerald-700 mb-1.5">检测到此设备保存过该邀请码的注册信息</div>
+                <div class="text-[12px] text-emerald-700/90 leading-relaxed">如果这是你刚刚注册过的账号，可点击下方按钮恢复查看账号与节点信息。</div>
+                <button onclick="restoreFromLocalCache()" class="w-full mt-3 py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg text-[13px] font-bold transition">
+                    恢复上次注册信息
+                </button>
+            </div>
             {% endif %}
 
             <p class="text-center text-xs text-gray-400 mt-8">Powered by EmbyPulse</p>
@@ -102,12 +109,21 @@
                 <a href="{{ client_download_url }}" target="_blank" class="block w-full bg-gray-800 hover:bg-gray-900 text-white font-bold py-2.5 rounded-lg transition text-sm text-center shadow-md">
                     <i class="fa-solid fa-download mr-2"></i> 下载客户端
                 </a>
+                <a href="/request" class="block w-full mt-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold py-2.5 rounded-lg transition text-sm text-center border border-indigo-100">
+                    <i class="fa-solid fa-users mr-2"></i> 进入用户社区
+                </a>
+                <button onclick="forgetSavedAccount()" class="w-full mt-2 bg-gray-100 hover:bg-gray-200 text-gray-600 font-bold py-2 rounded-lg transition text-xs">
+                    清除本机保存的账号信息
+                </button>
             </div>
         </div>
 
     </div>
 
     <script>
+        const inviteCode = "{{ code }}";
+        const registerCacheKey = `embypulse_register_cache_${inviteCode}`;
+
         async function register() {
             const btn = document.getElementById('reg-btn');
             const u = document.getElementById('username').value;
@@ -131,29 +147,15 @@
                 const json = await res.json();
                 
                 if (json.status === 'success') {
-                    document.getElementById('register-form').classList.add('hidden');
-                    document.getElementById('success-view').classList.remove('hidden');
-                    
-                    document.getElementById('res-user').textContent = u;
-                    document.getElementById('res-pass').textContent = p;
-                    
-                    // 🔥 核心更新：使用 innerHTML 并将换行符 \n 替换为 <br> 标签
-                    if (json.welcome_message) {
-                        const formattedMsg = json.welcome_message.replace(/\n/g, '<br>');
-                        document.getElementById('res-msg').innerHTML = formattedMsg;
-                        document.getElementById('welcome-msg-box').classList.remove('hidden');
-                    }
-
-                    // 渲染多节点测速面板
-                    let rawUrlStr = json.server_url || "";
-                    let pingRoutes = [];
-                    try {
-                        pingRoutes = JSON.parse(rawUrlStr);
-                        if(!Array.isArray(pingRoutes)) throw new Error();
-                    } catch(e) {
-                        pingRoutes = rawUrlStr ? [{name: "默认推荐节点", url: rawUrlStr, is_main: true}] : [];
-                    }
-                    renderDisplayRoutes(pingRoutes);
+                    const payload = {
+                        username: u,
+                        password: p,
+                        server_url: json.server_url || "",
+                        welcome_message: json.welcome_message || "",
+                        saved_at: new Date().toISOString()
+                    };
+                    persistRegisterCache(payload);
+                    renderSuccessView(payload);
 
                 } else {
                     alert("注册失败: " + json.message);
@@ -165,6 +167,60 @@
                 btn.disabled = false;
                 btn.textContent = "立即注册";
             }
+        }
+
+        function persistRegisterCache(payload) {
+            try {
+                localStorage.setItem(registerCacheKey, JSON.stringify(payload));
+            } catch(e) {}
+        }
+
+        function loadRegisterCache() {
+            try {
+                const raw = localStorage.getItem(registerCacheKey);
+                if (!raw) return null;
+                return JSON.parse(raw);
+            } catch(e) {
+                return null;
+            }
+        }
+
+        function renderSuccessView(payload) {
+            document.getElementById('register-form').classList.add('hidden');
+            document.getElementById('success-view').classList.remove('hidden');
+            document.getElementById('res-user').textContent = payload.username || '未知';
+            document.getElementById('res-pass').textContent = payload.password || '未知';
+
+            const msgBox = document.getElementById('welcome-msg-box');
+            if (payload.welcome_message) {
+                const formattedMsg = payload.welcome_message.replace(/\n/g, '<br>');
+                document.getElementById('res-msg').innerHTML = formattedMsg;
+                msgBox.classList.remove('hidden');
+            } else {
+                msgBox.classList.add('hidden');
+            }
+
+            let pingRoutes = [];
+            try {
+                pingRoutes = JSON.parse(payload.server_url || "");
+                if(!Array.isArray(pingRoutes)) throw new Error();
+            } catch(e) {
+                pingRoutes = payload.server_url ? [{name: "默认推荐节点", url: payload.server_url, is_main: true}] : [];
+            }
+            renderDisplayRoutes(pingRoutes);
+        }
+
+        function restoreFromLocalCache() {
+            const cached = loadRegisterCache();
+            if (!cached) return alert("未找到本机缓存信息");
+            renderSuccessView(cached);
+        }
+
+        function forgetSavedAccount() {
+            try {
+                localStorage.removeItem(registerCacheKey);
+                alert('已清除');
+            } catch(e) {}
         }
 
         function copyText(id) {
@@ -251,6 +307,13 @@
                 }, 3000);
             });
         }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            const cached = loadRegisterCache();
+            if (!cached) return;
+            const recoverCard = document.getElementById('cached-account-recover');
+            if (recoverCard) recoverCard.classList.remove('hidden');
+        });
     </script>
 </body>
 </html>
