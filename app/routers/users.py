@@ -71,6 +71,9 @@ class InviteBatchModelLocal(BaseModel):
     codes: List[str]
     action: str
 
+class InviteDefaultTemplateModel(BaseModel):
+    template_user_id: Optional[str] = None
+
 # ==========================================
 # 🔥 核心引擎：全量策略快照克隆器
 # ==========================================
@@ -219,14 +222,27 @@ def api_gen_invite(data: InviteGenModelLocal, request: Request):
     if not request.session.get("user"): return {"status": "error"}
     try:
         count = data.count if data.count and data.count > 0 else 1
+        default_template_id = cfg.get("invite_default_template_id", None)
+        final_template_id = data.template_user_id if data.template_user_id is not None else default_template_id
         codes = []
         created_at = datetime.datetime.now().isoformat()
         for _ in range(count):
             code = secrets.token_hex(3)
-            query_db("INSERT INTO invitations (code, days, created_at, template_user_id) VALUES (?, ?, ?, ?)", (code, data.days, created_at, data.template_user_id))
+            query_db("INSERT INTO invitations (code, days, created_at, template_user_id) VALUES (?, ?, ?, ?)", (code, data.days, created_at, final_template_id))
             codes.append(code)
-        return {"status": "success", "codes": codes}
+        return {"status": "success", "codes": codes, "template_user_id": final_template_id}
     except Exception as e: return {"status": "error", "message": str(e)}
+
+@router.get("/api/manage/invite/default-template")
+def api_get_invite_default_template(request: Request):
+    if not request.session.get("user"): return {"status": "error"}
+    return {"status": "success", "template_user_id": cfg.get("invite_default_template_id", None)}
+
+@router.post("/api/manage/invite/default-template")
+def api_set_invite_default_template(data: InviteDefaultTemplateModel, request: Request):
+    if not request.session.get("user"): return {"status": "error"}
+    cfg["invite_default_template_id"] = data.template_user_id if data.template_user_id else ""
+    return {"status": "success", "template_user_id": cfg.get("invite_default_template_id", "")}
 
 @router.get("/api/manage/invites")
 def api_get_invites(request: Request):

@@ -508,12 +508,14 @@ let currentFilter = 'all';
 let invitesList = [];
 let selectedInvites = new Set();
 const inviteTemplateDefaultKey = 'embypulse_invite_template_default';
+let inviteTemplateDefaultServer = null;
 
 let currentApplyTemplate = null;
 
 document.addEventListener('DOMContentLoaded', function() { 
     loadLibraries(); 
     loadUsers(); 
+    loadInviteTemplateDefault();
 });
 
 async function openInviteManageModal() {
@@ -924,10 +926,18 @@ function populateTemplates(selectId, excludeUserId = null) {
     if (selectId === 'invite-template') applyInviteTemplateDefault();
 }
 
+async function loadInviteTemplateDefault() {
+    try {
+        const res = await fetch('/api/manage/invite/default-template');
+        const json = await res.json();
+        if (json.status === 'success') inviteTemplateDefaultServer = json.template_user_id || '';
+    } catch (e) {}
+}
+
 function applyInviteTemplateDefault() {
     const sel = document.getElementById('invite-template');
     if (!sel) return;
-    const saved = localStorage.getItem(inviteTemplateDefaultKey);
+    const saved = inviteTemplateDefaultServer !== null ? inviteTemplateDefaultServer : localStorage.getItem(inviteTemplateDefaultKey);
     if (saved !== null && Array.from(sel.options).some(opt => opt.value === saved)) {
         sel.value = saved;
     } else {
@@ -944,12 +954,25 @@ function updateInviteTemplateTip() {
     tip.textContent = `当前默认：${selectedText}`;
 }
 
-function saveInviteTemplateDefault() {
+async function saveInviteTemplateDefault() {
     const sel = document.getElementById('invite-template');
     if (!sel) return;
     localStorage.setItem(inviteTemplateDefaultKey, sel.value || '');
+    try {
+        const res = await fetch('/api/manage/invite/default-template', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ template_user_id: sel.value || null })
+        });
+        const json = await res.json();
+        if (json.status === 'success') {
+            inviteTemplateDefaultServer = json.template_user_id || '';
+            applyInviteTemplateDefault();
+            return alert('已保存为系统默认模板');
+        }
+    } catch (e) {}
     applyInviteTemplateDefault();
-    alert('已保存为默认模板');
+    alert('网络异常，已退回保存到本机默认模板');
 }
 
 function toggleNewTemplateOpts() { 
@@ -1267,6 +1290,9 @@ function openInviteModal() {
     document.getElementById('custom-duration').value = ''; 
     selectDuration(30); 
     populateTemplates('invite-template'); 
+    if (inviteTemplateDefaultServer === null) {
+        loadInviteTemplateDefault().then(() => applyInviteTemplateDefault());
+    }
     setTimeout(() => { modal.classList.add('flex'); }, 10); 
 }
 

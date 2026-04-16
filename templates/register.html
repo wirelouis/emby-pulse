@@ -46,6 +46,9 @@
                 <button onclick="register()" id="reg-btn" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2.5 rounded-lg transition shadow-md mt-4">
                     立即注册
                 </button>
+                <p class="text-[11px] text-gray-400 leading-relaxed">
+                    注册成功后会在本机保留 7 天信息，避免误关页面后找不回账号。
+                </p>
             </div>
             {% else %}
             <div class="text-center py-8">
@@ -71,6 +74,7 @@
             </div>
             <h2 class="text-2xl font-bold text-gray-800 mb-2">注册成功！</h2>
             <p class="text-gray-500 text-[13px] mb-4">请截图保存账号，并在下方选择最快节点登录</p>
+            <p class="text-[11px] text-amber-600 mb-4">提示：账号信息仅保存在当前浏览器本机，可随时手动清除。</p>
 
             <div class="bg-gray-50 rounded-xl p-4 text-left space-y-3 border border-gray-200">
                 <div class="grid grid-cols-2 gap-3 mb-2">
@@ -88,6 +92,9 @@
                         </div>
                     </div>
                 </div>
+                <button onclick="copyAccountBundle()" class="w-full py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg text-xs font-bold">
+                    一键复制账号 + 节点信息
+                </button>
 
                 <div id="server-routes-section" class="pt-2 border-t border-gray-200">
                     <div class="flex justify-between items-center mb-2">
@@ -122,7 +129,9 @@
 
     <script>
         const inviteCode = "{{ code }}";
+        const inviteStillValid = "{{ '1' if valid else '0' }}" === "1";
         const registerCacheKey = `embypulse_register_cache_${inviteCode}`;
+        const registerCacheTTL = 7 * 24 * 60 * 60 * 1000;
 
         async function register() {
             const btn = document.getElementById('reg-btn');
@@ -179,7 +188,14 @@
             try {
                 const raw = localStorage.getItem(registerCacheKey);
                 if (!raw) return null;
-                return JSON.parse(raw);
+                const parsed = JSON.parse(raw);
+                if (!parsed?.saved_at) return null;
+                const savedAt = new Date(parsed.saved_at).getTime();
+                if (!savedAt || (Date.now() - savedAt > registerCacheTTL)) {
+                    localStorage.removeItem(registerCacheKey);
+                    return null;
+                }
+                return parsed;
             } catch(e) {
                 return null;
             }
@@ -221,6 +237,20 @@
                 localStorage.removeItem(registerCacheKey);
                 alert('已清除');
             } catch(e) {}
+        }
+
+        function copyAccountBundle() {
+            const username = document.getElementById('res-user').textContent || '';
+            const password = document.getElementById('res-pass').textContent || '';
+            const routes = Array.from(document.querySelectorAll('#route-list-display .select-all')).map(node => node.textContent);
+            const text = [
+                `用户名: ${username}`,
+                `密码: ${password}`,
+                '',
+                '可用节点:',
+                ...(routes.length ? routes.map((r, i) => `${i + 1}. ${r}`) : ['- 管理员暂未配置'])
+            ].join('\n');
+            navigator.clipboard.writeText(text).then(() => alert('账号与节点信息已复制'));
         }
 
         function copyText(id) {
@@ -312,7 +342,11 @@
             const cached = loadRegisterCache();
             if (!cached) return;
             const recoverCard = document.getElementById('cached-account-recover');
-            if (recoverCard) recoverCard.classList.remove('hidden');
+            if (recoverCard) {
+                recoverCard.classList.remove('hidden');
+                return;
+            }
+            if (!inviteStillValid) renderSuccessView(cached);
         });
     </script>
 </body>
