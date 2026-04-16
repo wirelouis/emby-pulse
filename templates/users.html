@@ -436,7 +436,11 @@
             </div>
             <div>
                 <label class="block text-[11px] font-bold text-gray-500 mb-2 uppercase">权限继承源 (全量克隆)</label>
-                <select id="invite-template" class="w-full px-4 py-3 rounded-xl border border-gray-200/80 dark:border-white/10 bg-gray-50 dark:bg-black/20 outline-none text-[13px] focus:ring-2 focus:ring-emerald-500 shadow-sm cursor-pointer"></select>
+                <select id="invite-template" onchange="updateInviteTemplateTip()" class="w-full px-4 py-3 rounded-xl border border-gray-200/80 dark:border-white/10 bg-gray-50 dark:bg-black/20 outline-none text-[13px] focus:ring-2 focus:ring-emerald-500 shadow-sm cursor-pointer"></select>
+                <div class="flex items-center justify-between mt-2">
+                    <span id="invite-template-tip" class="text-[11px] text-gray-400">未设置默认模板，将使用“默认模板 (全库)”</span>
+                    <button onclick="saveInviteTemplateDefault()" type="button" class="text-[11px] font-bold text-emerald-600 hover:text-emerald-700">设为默认</button>
+                </div>
             </div>
             <div class="flex justify-end gap-3 mt-8">
                 <button onclick="closeInviteModal()" class="px-5 py-2.5 bg-gray-100 dark:bg-[#2C2C2E] text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-[#3A3A3C] rounded-xl font-bold text-[13px] transition-colors">取消</button>
@@ -503,12 +507,15 @@ let selectedUsers = new Set();
 let currentFilter = 'all';
 let invitesList = [];
 let selectedInvites = new Set();
+const inviteTemplateDefaultKey = 'embypulse_invite_template_default';
+let inviteTemplateDefaultServer = null;
 
 let currentApplyTemplate = null;
 
 document.addEventListener('DOMContentLoaded', function() { 
     loadLibraries(); 
     loadUsers(); 
+    loadInviteTemplateDefault();
 });
 
 async function openInviteManageModal() {
@@ -916,6 +923,57 @@ function populateTemplates(selectId, excludeUserId = null) {
         sel.appendChild(option); 
     });
     if (selectId === 'new-template') toggleNewTemplateOpts();
+    if (selectId === 'invite-template') applyInviteTemplateDefault();
+}
+
+async function loadInviteTemplateDefault() {
+    try {
+        const res = await fetch('/api/manage/invite/default-template');
+        const json = await res.json();
+        if (json.status === 'success') inviteTemplateDefaultServer = json.template_user_id || '';
+    } catch (e) {}
+}
+
+function applyInviteTemplateDefault() {
+    const sel = document.getElementById('invite-template');
+    if (!sel) return;
+    const saved = inviteTemplateDefaultServer !== null ? inviteTemplateDefaultServer : localStorage.getItem(inviteTemplateDefaultKey);
+    if (saved !== null && Array.from(sel.options).some(opt => opt.value === saved)) {
+        sel.value = saved;
+    } else {
+        sel.value = '';
+    }
+    updateInviteTemplateTip();
+}
+
+function updateInviteTemplateTip() {
+    const sel = document.getElementById('invite-template');
+    const tip = document.getElementById('invite-template-tip');
+    if (!sel || !tip) return;
+    const selectedText = sel.options[sel.selectedIndex]?.textContent || '默认模板 (全库)';
+    tip.textContent = `当前默认：${selectedText}`;
+}
+
+async function saveInviteTemplateDefault() {
+    const sel = document.getElementById('invite-template');
+    if (!sel) return;
+    localStorage.setItem(inviteTemplateDefaultKey, sel.value || '');
+    try {
+        const res = await fetch('/api/manage/invite/default-template', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ template_user_id: sel.value || null })
+        });
+        const json = await res.json();
+        if (json.status === 'success') {
+            inviteTemplateDefaultServer = json.template_user_id || '';
+            applyInviteTemplateDefault();
+            return alert('已保存为系统默认模板');
+        }
+        if (json.message) return alert(json.message);
+    } catch (e) {}
+    applyInviteTemplateDefault();
+    alert('网络异常，已退回保存到本机默认模板');
 }
 
 function toggleNewTemplateOpts() { 
@@ -969,6 +1027,11 @@ async function generateInvite(e) {
             });
             document.getElementById('invite-form-step').classList.add('hidden'); 
             document.getElementById('invite-result-step').classList.remove('hidden');
+            if (json.warnings && json.warnings.length) {
+                alert(json.warnings.join('\n'));
+            }
+        } else if (json.message) {
+            alert(json.message);
         }
     } catch (e) {} finally { 
         submitBtn.disabled = false; 
@@ -1233,6 +1296,9 @@ function openInviteModal() {
     document.getElementById('custom-duration').value = ''; 
     selectDuration(30); 
     populateTemplates('invite-template'); 
+    if (inviteTemplateDefaultServer === null) {
+        loadInviteTemplateDefault().then(() => applyInviteTemplateDefault());
+    }
     setTimeout(() => { modal.classList.add('flex'); }, 10); 
 }
 
