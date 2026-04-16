@@ -139,10 +139,13 @@
 
         async function register() {
             const btn = document.getElementById('reg-btn');
-            const u = document.getElementById('username').value;
+            const u = document.getElementById('username').value.trim();
             const p = document.getElementById('password').value;
+            const userPattern = /^[A-Za-z0-9_.-]{3,32}$/;
             
             if (!u || !p) return alert("请填写完整");
+            if (!userPattern.test(u)) return alert("用户名需为 3-32 位，仅支持字母/数字/._-");
+            if (p.length < 6 || p.length > 64) return alert("密码长度需为 6-64 位");
             
             btn.disabled = true;
             btn.textContent = "注册中...";
@@ -161,7 +164,7 @@
                 
                 if (json.status === 'success') {
                     const payload = {
-                        username: u,
+                        username: json.username || u,
                         password: document.getElementById('cache-password')?.checked ? p : "",
                         server_url: json.server_url || "",
                         welcome_message: json.welcome_message || "",
