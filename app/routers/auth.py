@@ -1,6 +1,7 @@
 import sqlite3
 import requests
 import datetime
+import re
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from app.core.config import cfg
@@ -8,6 +9,8 @@ from app.core.database import DB_PATH, query_db
 from app.schemas.models import LoginModel, UserRegisterModel
 
 router = APIRouter()
+REQUEST_TIMEOUT = 8
+USERNAME_PATTERN = re.compile(r"^[A-Za-z0-9_\-.]{3,32}$")
 
 def ensure_invitations_schema():
     try:
@@ -33,6 +36,13 @@ ensure_invitations_schema()
 @router.post("/api/register")
 async def api_register(data: UserRegisterModel):
     try:
+        username = (data.username or "").strip()
+        password = data.password or ""
+        if not USERNAME_PATTERN.match(username):
+            return JSONResponse(content={"status": "error", "message": "用户名需为 3-32 位，仅支持字母/数字/._-"})
+        if len(password) < 6 or len(password) > 64:
+            return JSONResponse(content={"status": "error", "message": "密码长度需为 6-64 位"})
+
         invite = query_db("SELECT * FROM invitations WHERE code = ?", (data.code,), one=True)
         if not invite:
             return JSONResponse(content={"status": "error", "message": "无效的邀请码"})
@@ -47,18 +57,18 @@ async def api_register(data: UserRegisterModel):
         if not host or not key:
             return JSONResponse(content={"status": "error", "message": "系统未配置 Emby 连接"})
 
-        res = requests.post(f"{host}/emby/Users/New?api_key={key}", json={"Name": data.username})
+        res = requests.post(f"{host}/emby/Users/New?api_key={key}", json={"Name": username}, timeout=REQUEST_TIMEOUT)
         if res.status_code != 200:
             return JSONResponse(content={"status": "error", "message": f"用户名可能已存在"})
         
         new_id = res.json()['Id']
 
-        pwd_res = requests.post(f"{host}/emby/Users/{new_id}/Password?api_key={key}", json={"Id": new_id, "NewPw": data.password})
+        pwd_res = requests.post(f"{host}/emby/Users/{new_id}/Password?api_key={key}", json={"Id": new_id, "NewPw": password}, timeout=REQUEST_TIMEOUT)
         if pwd_res.status_code not in [200, 204]:
-            requests.delete(f"{host}/emby/Users/{new_id}?api_key={key}")
+            requests.delete(f"{host}/emby/Users/{new_id}?api_key={key}", timeout=REQUEST_TIMEOUT)
             return JSONResponse(content={"status": "error", "message": "密码设置失败"})
 
-        p_res = requests.get(f"{host}/emby/Users/{new_id}?api_key={key}")
+        p_res = requests.get(f"{host}/emby/Users/{new_id}?api_key={key}", timeout=REQUEST_TIMEOUT)
         policy = p_res.json().get('Policy', {}) if p_res.status_code == 200 else {}
         
         policy['IsDisabled'] = False
@@ -68,7 +78,7 @@ async def api_register(data: UserRegisterModel):
         
         if template_id:
             try:
-                src_res = requests.get(f"{host}/emby/Users/{template_id}?api_key={key}", timeout=5)
+                src_res = requests.get(f"{host}/emby/Users/{template_id}?api_key={key}", timeout=REQUEST_TIMEOUT)
                 if src_res.status_code == 200:
                     src_policy = src_res.json().get('Policy', {})
                     
@@ -87,9 +97,10 @@ async def api_register(data: UserRegisterModel):
                     
                     if 'MaxParentalRating' in src_policy:
                         policy['MaxParentalRating'] = src_policy['MaxParentalRating']
-            except: pass
+            except Exception:
+                pass
             
-        requests.post(f"{host}/emby/Users/{new_id}/Policy?api_key={key}", json=policy)
+        requests.post(f"{host}/emby/Users/{new_id}/Policy?api_key={key}", json=policy, timeout=REQUEST_TIMEOUT)
 
         expire_date = None
         if invite['days'] > 0:
@@ -101,7 +112,7 @@ async def api_register(data: UserRegisterModel):
         used_at = datetime.datetime.now().isoformat()
         query_db(
             "UPDATE invitations SET used_count = COALESCE(used_count, 0) + 1, used_by = ?, used_at = ?, status = 1 WHERE code = ?", 
-            (data.username, used_at, data.code)
+            (username, used_at, data.code)
         )
 
         public_url = cfg.get("emby_public_url") or host 
@@ -110,11 +121,14 @@ async def api_register(data: UserRegisterModel):
         return JSONResponse(content={
             "status": "success",
             "server_url": public_url,
-            "welcome_message": welcome_msg
+            "welcome_message": welcome_msg,
+            "username": username
         })
 
-    except Exception as e:
-        return JSONResponse(content={"status": "error", "message": str(e)})
+    except requests.RequestException:
+        return JSONResponse(content={"status": "error", "message": "媒体服务器请求超时，请稍后重试"})
+    except Exception:
+        return JSONResponse(content={"status": "error", "message": "注册流程异常，请联系管理员"})
 
 
 @router.post("/api/login")

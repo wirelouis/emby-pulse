@@ -37,6 +37,10 @@
                     <label class="block text-sm font-medium text-gray-700 mb-1">密码</label>
                     <input type="password" id="password" class="w-full px-4 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-indigo-500 outline-none" placeholder="设置登录密码">
                 </div>
+                <label class="flex items-center gap-2 text-[12px] text-gray-500 cursor-pointer">
+                    <input id="cache-password" type="checkbox" class="w-4 h-4 rounded text-indigo-600">
+                    在本机缓存中保存密码（默认不保存，更安全）
+                </label>
 
                 <div class="bg-indigo-50 text-indigo-700 text-xs p-3 rounded-lg flex items-center">
                     <span class="mr-2">⏳</span>
@@ -46,12 +50,22 @@
                 <button onclick="register()" id="reg-btn" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2.5 rounded-lg transition shadow-md mt-4">
                     立即注册
                 </button>
+                <p class="text-[11px] text-gray-400 leading-relaxed">
+                    注册成功后会在本机保留 7 天信息，避免误关页面后找不回账号。
+                </p>
             </div>
             {% else %}
             <div class="text-center py-8">
                 <div class="text-4xl mb-4">💔</div>
                 <h3 class="text-lg font-bold text-gray-700">链接已失效</h3>
                 <p class="text-gray-500 text-sm mt-2">该邀请链接不存在或已达到使用次数上限。</p>
+            </div>
+            <div id="cached-account-recover" class="hidden mt-4 p-3 rounded-xl border border-emerald-200 bg-emerald-50/70 text-left">
+                <div class="text-xs font-bold text-emerald-700 mb-1.5">检测到此设备保存过该邀请码的注册信息</div>
+                <div class="text-[12px] text-emerald-700/90 leading-relaxed">如果这是你刚刚注册过的账号，可点击下方按钮恢复查看账号与节点信息。</div>
+                <button onclick="restoreFromLocalCache()" class="w-full mt-3 py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg text-[13px] font-bold transition">
+                    恢复上次注册信息
+                </button>
             </div>
             {% endif %}
 
@@ -64,6 +78,7 @@
             </div>
             <h2 class="text-2xl font-bold text-gray-800 mb-2">注册成功！</h2>
             <p class="text-gray-500 text-[13px] mb-4">请截图保存账号，并在下方选择最快节点登录</p>
+            <p class="text-[11px] text-amber-600 mb-4">提示：账号信息仅保存在当前浏览器本机，可随时手动清除。</p>
 
             <div class="bg-gray-50 rounded-xl p-4 text-left space-y-3 border border-gray-200">
                 <div class="grid grid-cols-2 gap-3 mb-2">
@@ -81,6 +96,9 @@
                         </div>
                     </div>
                 </div>
+                <button onclick="copyAccountBundle()" class="w-full py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg text-xs font-bold">
+                    一键复制账号 + 节点信息
+                </button>
 
                 <div id="server-routes-section" class="pt-2 border-t border-gray-200">
                     <div class="flex justify-between items-center mb-2">
@@ -102,18 +120,32 @@
                 <a href="{{ client_download_url }}" target="_blank" class="block w-full bg-gray-800 hover:bg-gray-900 text-white font-bold py-2.5 rounded-lg transition text-sm text-center shadow-md">
                     <i class="fa-solid fa-download mr-2"></i> 下载客户端
                 </a>
+                <a href="/request" class="block w-full mt-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold py-2.5 rounded-lg transition text-sm text-center border border-indigo-100">
+                    <i class="fa-solid fa-users mr-2"></i> 进入用户社区
+                </a>
+                <button onclick="forgetSavedAccount()" class="w-full mt-2 bg-gray-100 hover:bg-gray-200 text-gray-600 font-bold py-2 rounded-lg transition text-xs">
+                    清除本机保存的账号信息
+                </button>
             </div>
         </div>
 
     </div>
 
     <script>
+        const inviteCode = "{{ code }}";
+        const inviteStillValid = "{{ '1' if valid else '0' }}" === "1";
+        const registerCacheKey = `embypulse_register_cache_${inviteCode}`;
+        const registerCacheTTL = 7 * 24 * 60 * 60 * 1000;
+
         async function register() {
             const btn = document.getElementById('reg-btn');
-            const u = document.getElementById('username').value;
+            const u = document.getElementById('username').value.trim();
             const p = document.getElementById('password').value;
+            const userPattern = /^[A-Za-z0-9_.-]{3,32}$/;
             
             if (!u || !p) return alert("请填写完整");
+            if (!userPattern.test(u)) return alert("用户名需为 3-32 位，仅支持字母/数字/._-");
+            if (p.length < 6 || p.length > 64) return alert("密码长度需为 6-64 位");
             
             btn.disabled = true;
             btn.textContent = "注册中...";
@@ -131,29 +163,15 @@
                 const json = await res.json();
                 
                 if (json.status === 'success') {
-                    document.getElementById('register-form').classList.add('hidden');
-                    document.getElementById('success-view').classList.remove('hidden');
-                    
-                    document.getElementById('res-user').textContent = u;
-                    document.getElementById('res-pass').textContent = p;
-                    
-                    // 🔥 核心更新：使用 innerHTML 并将换行符 \n 替换为 <br> 标签
-                    if (json.welcome_message) {
-                        const formattedMsg = json.welcome_message.replace(/\n/g, '<br>');
-                        document.getElementById('res-msg').innerHTML = formattedMsg;
-                        document.getElementById('welcome-msg-box').classList.remove('hidden');
-                    }
-
-                    // 渲染多节点测速面板
-                    let rawUrlStr = json.server_url || "";
-                    let pingRoutes = [];
-                    try {
-                        pingRoutes = JSON.parse(rawUrlStr);
-                        if(!Array.isArray(pingRoutes)) throw new Error();
-                    } catch(e) {
-                        pingRoutes = rawUrlStr ? [{name: "默认推荐节点", url: rawUrlStr, is_main: true}] : [];
-                    }
-                    renderDisplayRoutes(pingRoutes);
+                    const payload = {
+                        username: json.username || u,
+                        password: document.getElementById('cache-password')?.checked ? p : "",
+                        server_url: json.server_url || "",
+                        welcome_message: json.welcome_message || "",
+                        saved_at: new Date().toISOString()
+                    };
+                    persistRegisterCache(payload);
+                    renderSuccessView(payload);
 
                 } else {
                     alert("注册失败: " + json.message);
@@ -165,6 +183,85 @@
                 btn.disabled = false;
                 btn.textContent = "立即注册";
             }
+        }
+
+        function persistRegisterCache(payload) {
+            try {
+                localStorage.setItem(registerCacheKey, JSON.stringify(payload));
+            } catch(e) {}
+        }
+
+        function loadRegisterCache() {
+            try {
+                const raw = localStorage.getItem(registerCacheKey);
+                if (!raw) return null;
+                const parsed = JSON.parse(raw);
+                if (!parsed?.saved_at) return null;
+                const savedAt = new Date(parsed.saved_at).getTime();
+                if (!savedAt || (Date.now() - savedAt > registerCacheTTL)) {
+                    localStorage.removeItem(registerCacheKey);
+                    return null;
+                }
+                return parsed;
+            } catch(e) {
+                return null;
+            }
+        }
+
+        function renderSuccessView(payload) {
+            document.getElementById('register-form').classList.add('hidden');
+            document.getElementById('success-view').classList.remove('hidden');
+            document.getElementById('res-user').textContent = payload.username || '未知';
+            document.getElementById('res-pass').textContent = payload.password || '（未保存）';
+
+            const msgBox = document.getElementById('welcome-msg-box');
+            if (payload.welcome_message) {
+                const msg = document.getElementById('res-msg');
+                msg.innerHTML = '';
+                payload.welcome_message.split('\n').forEach((line, index) => {
+                    if (index > 0) msg.appendChild(document.createElement('br'));
+                    msg.appendChild(document.createTextNode(line));
+                });
+                msgBox.classList.remove('hidden');
+            } else {
+                msgBox.classList.add('hidden');
+            }
+
+            let pingRoutes = [];
+            try {
+                pingRoutes = JSON.parse(payload.server_url || "");
+                if(!Array.isArray(pingRoutes)) throw new Error();
+            } catch(e) {
+                pingRoutes = payload.server_url ? [{name: "默认推荐节点", url: payload.server_url, is_main: true}] : [];
+            }
+            renderDisplayRoutes(pingRoutes);
+        }
+
+        function restoreFromLocalCache() {
+            const cached = loadRegisterCache();
+            if (!cached) return alert("未找到本机缓存信息");
+            renderSuccessView(cached);
+        }
+
+        function forgetSavedAccount() {
+            try {
+                localStorage.removeItem(registerCacheKey);
+                alert('已清除');
+            } catch(e) {}
+        }
+
+        function copyAccountBundle() {
+            const username = document.getElementById('res-user').textContent || '';
+            const password = document.getElementById('res-pass').textContent || '';
+            const routes = Array.from(document.querySelectorAll('#route-list-display .select-all')).map(node => node.textContent);
+            const text = [
+                `用户名: ${username}`,
+                `密码: ${password}`,
+                '',
+                '可用节点:',
+                ...(routes.length ? routes.map((r, i) => `${i + 1}. ${r}`) : ['- 管理员暂未配置'])
+            ].join('\n');
+            navigator.clipboard.writeText(text).then(() => alert('账号与节点信息已复制'));
         }
 
         function copyText(id) {
@@ -251,6 +348,17 @@
                 }, 3000);
             });
         }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            const cached = loadRegisterCache();
+            if (!cached) return;
+            const recoverCard = document.getElementById('cached-account-recover');
+            if (recoverCard) {
+                recoverCard.classList.remove('hidden');
+                return;
+            }
+            if (!inviteStillValid) renderSuccessView(cached);
+        });
     </script>
 </body>
 </html>
