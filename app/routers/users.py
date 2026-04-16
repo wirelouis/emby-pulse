@@ -222,15 +222,39 @@ def api_gen_invite(data: InviteGenModelLocal, request: Request):
     if not request.session.get("user"): return {"status": "error"}
     try:
         count = data.count if data.count and data.count > 0 else 1
+        if count > 50:
+            return {"status": "error", "message": "单次最多生成 50 个邀请码"}
+        if data.days == 0 or data.days < -1:
+            return {"status": "error", "message": "邀请码有效期参数无效"}
+        if data.days > 3650:
+            return {"status": "error", "message": "邀请码有效期超出允许范围"}
+
         default_template_id = cfg.get("invite_default_template_id", None)
         final_template_id = data.template_user_id if data.template_user_id is not None else default_template_id
+        warnings = []
+
+        if final_template_id:
+            check_res = media_api.get(f"/Users/{final_template_id}", timeout=5)
+            if check_res.status_code != 200:
+                final_template_id = None
+                warnings.append("默认模板用户不存在，已回退为全库默认策略")
+
         codes = []
         created_at = datetime.datetime.now().isoformat()
         for _ in range(count):
-            code = secrets.token_hex(3)
-            query_db("INSERT INTO invitations (code, days, created_at, template_user_id) VALUES (?, ?, ?, ?)", (code, data.days, created_at, final_template_id))
-            codes.append(code)
-        return {"status": "success", "codes": codes, "template_user_id": final_template_id}
+            inserted = False
+            for _ in range(5):
+                code = secrets.token_hex(3)
+                try:
+                    query_db("INSERT INTO invitations (code, days, created_at, template_user_id) VALUES (?, ?, ?, ?)", (code, data.days, created_at, final_template_id))
+                    codes.append(code)
+                    inserted = True
+                    break
+                except Exception:
+                    continue
+            if not inserted:
+                return {"status": "error", "message": "邀请码生成冲突，请重试"}
+        return {"status": "success", "codes": codes, "template_user_id": final_template_id, "warnings": warnings}
     except Exception as e: return {"status": "error", "message": str(e)}
 
 @router.get("/api/manage/invite/default-template")
@@ -241,6 +265,10 @@ def api_get_invite_default_template(request: Request):
 @router.post("/api/manage/invite/default-template")
 def api_set_invite_default_template(data: InviteDefaultTemplateModel, request: Request):
     if not request.session.get("user"): return {"status": "error"}
+    if data.template_user_id:
+        res = media_api.get(f"/Users/{data.template_user_id}", timeout=5)
+        if res.status_code != 200:
+            return {"status": "error", "message": "模板用户不存在或无法访问"}
     cfg["invite_default_template_id"] = data.template_user_id if data.template_user_id else ""
     return {"status": "success", "template_user_id": cfg.get("invite_default_template_id", "")}
 

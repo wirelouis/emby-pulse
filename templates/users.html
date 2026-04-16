@@ -970,6 +970,7 @@ async function saveInviteTemplateDefault() {
             applyInviteTemplateDefault();
             return alert('已保存为系统默认模板');
         }
+        if (json.message) return alert(json.message);
     } catch (e) {}
     applyInviteTemplateDefault();
     alert('网络异常，已退回保存到本机默认模板');
@@ -1026,6 +1027,11 @@ async function generateInvite(e) {
             });
             document.getElementById('invite-form-step').classList.add('hidden'); 
             document.getElementById('invite-result-step').classList.remove('hidden');
+            if (json.warnings && json.warnings.length) {
+                alert(json.warnings.join('\n'));
+            }
+        } else if (json.message) {
+            alert(json.message);
         }
     } catch (e) {} finally { 
         submitBtn.disabled = false; 
